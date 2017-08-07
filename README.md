@@ -14,8 +14,8 @@ Scripts include:
       
   - FileCopy:
       - Similar to WebDeploy
-  - ServicDeploy:
+  - ServiceDeploy:
      - Exactly the same as Webdeploy except for services
      - Supports both Service Name and Service Display Name as window's treats them differently. Provides lack of headaches if one or the          other is unknown.
-  
+ ``` 
       
