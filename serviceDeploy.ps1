@@ -25,8 +25,7 @@ This script is used for the backend of the deployment portal
         -Fixed issue with Files Still being copied
         -Won't cancel out on error
 #>
-param([Parameter(Mandatory=$true)]$username,
-      [Parameter(Mandatory=$true)]$password,
+param(
       [Parameter(Mandatory=$true)]$source,
       [Parameter(Mandatory=$true)]$destination,
       [Parameter(Mandatory=$true)]$serviceName
@@ -35,9 +34,6 @@ echo "Extracting Source and Destination Computers";
 $srcComputer = "";
 $destComputer = "";
 $i = 2;
-$securePass = ConvertTo-SecureString $password -AsPlainText -Force;
-$credentials = New-Object System.Management.Automation.PSCredential("ACADIAN\$username",$securePass);
-
 if($source -like "*.*"){
     try{
         while($source[$i] -ne "\"){
@@ -196,30 +192,24 @@ $scriptContent2 = {
                 }
 
         }
-    }
-
-
-$session = New-PSSession -ComputerName $destComputer -Credential $credentials;
-if($session -eq $null){
-    echo "Invalid User Credentials";
-    $results = "creds";
 }
-if($results -eq "creds"){
+
+
+
+try{ 
     echo "trying a session with service Account Credentials";
-    try{ 
-        $session = New-PSSession -ComputerName $destComputer;
-        echo "Authentication Successful with local Credentials, executing...";
-        $results = Invoke-Command -Session $session -ScriptBlock $scriptContent1 -ArgumentList $source,$destination,$serviceName;
-        echo $results;
-    } 
-    catch
-    { 
-        echo "Service Account Does not have access to the specified Server...";
-        echo $_.Exception;
-        $results =  "error";
-    }
+    $session = New-PSSession -ComputerName $destComputer;
+    echo "Authentication Successful with local Credentials, executing...";
+    $results = Invoke-Command -Session $session -ScriptBlock $scriptContent1 -ArgumentList $source,$destination,$serviceName;
+    echo $results;
+} 
+catch
+{ 
+    echo "Service Account Does not have access to the specified Server...";
+    echo $_.Exception;
+    $results =  "error";
 }
-else{
+if(($results -ne "error")){ 
     try{ 
         ##stop the service.
         Invoke-Command -Session $session -ScriptBlock $scriptContent1 -ArgumentList $source,$destination,$serviceName;
@@ -230,17 +220,41 @@ else{
 
 #Begin to copy files now that the service is Stopped
 if($results -ne "error"){
-    try{
-        echo "Beginning to copy files...";
-        Copy-Item -path $source -Destination $destination -Force -Recurse;
-        $filesCopied = (Get-ChildItem $source | Measure-Object ).Count;
-        $values = (Get-ChildItem $source -Recurse | Measure-Object -property length -sum);
-        $values = ("{0:N2}" -f ($values.sum / 1MB)) + "MB";
-        echo "Files copied successfully: $filesCopied ($values)";
-    }catch{
+        try{
+            echo "Creating a backup of the files in destination directory.....";
+            $parent = Split-Path -parent $destination;
+            echo $parent;
+            mkdir -Path $parent -Name "backup" -ErrorAction SilentlyContinue;
+            Copy-Item -Path $destination -Destination "$parent/backup" -Recurse -Force;
+            echo "backup created Successfully!";
+            }
+        catch
+        {
+            Write-Error -Message "Error creating backup....Exiting...";
+            return;
+        }
+        try{
+            echo "Beginning to copy files...";
+            $filesCopied = (Get-ChildItem $source -Recurse | Measure-Object ).Count;
+            $values = (Get-ChildItem $source -Recurse | Measure-Object -property length -sum);
+            $test = $values.sum / 1MB;
+            $values = ("{0:N2}" -f ($values.sum / 1MB)) + "MB"
+            if($test -gt 250){                                       #Value can be changed
+                Write-Error -Message "File sizes too large, max of 250MB";
+                return;
+            }
+            Copy-Item -path $source -Destination $destination -Force -Recurse;
+            echo "Files copied successfully: $filesCopied ($values)";
+            echo "Removing backup files...."
+            Remove-Item -Path "$parent/backup" -Recurse -Force;
+        }catch{
         echo $_.Exception;
+        echo "Restoring backup...."
+        Remove-Item -Path $destination  -Force -Recurse;
+        Copy-Item -Path "$parent/backup" -Destination $destination;
+        Remove-Item -Path "$parent/backup" -Force -Recurse;
         return;
-    }
+    }    
 
     ##restart the service
     $res = Invoke-Command -Session $session -ScriptBlock $scriptContent2 -ArgumentList $serviceName;
