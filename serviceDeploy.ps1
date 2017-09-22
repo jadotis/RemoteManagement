@@ -24,6 +24,13 @@ This script is used for the backend of the deployment portal
         -Error Checking for Parameters
         -Fixed issue with Files Still being copied
         -Won't cancel out on error
+    -Version 3.0 (9/21/2017)
+        -Fixed backup issues
+        -Made backup optional based on leaves
+        -Replaced some True variables with the appropriate $True
+        -Fixed minute issues that had issues with performance
+        -Cleaned and removed unnecessary code.
+        -Early exits on conditions that should cause a termination
 #>
 param(
       [Parameter(Mandatory=$true)]$source,
@@ -99,6 +106,33 @@ else{
    Write-Error -Message ($destComputer +" is not online or is invalid");
    return;
 }
+if(!(Test-Path -Path $source)){
+    Write-Error -Message "Unable to find Source: Check path";
+    return;
+}
+if(!(Test-Path -Path $destination)){
+    echo "The path does not exist, creating folder...";
+    $backup = $false;
+    $folderName = Split-Path $destination -Leaf;
+    $parent = Split-Path $destination -Parent;
+    try{
+        mkdir -Path $parent -Name $folderName;
+    }catch{
+        Write-Error -Message "Unable to create the destination folder... Exiting....";
+        exit;
+    }
+}
+else{
+    $backup = $true;
+    $folderName = Split-Path $destination -Leaf;
+    $parent = Split-Path $destination -Parent;
+    echo "creating a backup for the folder: $foldername";
+    mkdir -Path $parent -name "backup" -ErrorAction Stop;
+    Copy-Item -Path "$destination/*" -Destination "$parent/backup";
+    remove-item -Path "$destination/*" -Force -Recurse -ErrorAction Stop;
+}
+#End confirmation and prep steps.
+
 
 #Remote Management and Script blocks
 $scriptContent1 = {
@@ -124,6 +158,7 @@ $scriptContent1 = {
             }
             else{
                 echo ("unsuccessfully stopped " + $_.Exception);
+                exit;
             }
 
             }
@@ -194,8 +229,6 @@ $scriptContent2 = {
         }
 }
 
-
-
 try{ 
     echo "trying a session with service Account Credentials";
     $session = New-PSSession -ComputerName $destComputer;
@@ -221,19 +254,6 @@ if(($results -ne "error")){
 #Begin to copy files now that the service is Stopped
 if($results -ne "error"){
         try{
-            echo "Creating a backup of the files in destination directory.....";
-            $parent = Split-Path -parent $destination;
-            echo $parent;
-            mkdir -Path $parent -Name "backup" -ErrorAction SilentlyContinue;
-            Copy-Item -Path $destination -Destination "$parent/backup" -Recurse -Force;
-            echo "backup created Successfully!";
-            }
-        catch
-        {
-            Write-Error -Message "Error creating backup....Exiting...";
-            return;
-        }
-        try{
             echo "Beginning to copy files...";
             $filesCopied = (Get-ChildItem $source -Recurse | Measure-Object ).Count;
             $values = (Get-ChildItem $source -Recurse | Measure-Object -property length -sum);
@@ -245,15 +265,19 @@ if($results -ne "error"){
             }
             Copy-Item -path $source -Destination $destination -Force -Recurse;
             echo "Files copied successfully: $filesCopied ($values)";
-            echo "Removing backup files...."
-            Remove-Item -Path "$parent/backup" -Recurse -Force;
+            if($backup){
+                echo "Removing backup files..."
+                Remove-Item -Path "$parent/backup" -Recurse -Force;
+            }
         }catch{
-        echo $_.Exception;
-        echo "Restoring backup...."
-        Remove-Item -Path $destination  -Force -Recurse;
-        Copy-Item -Path "$parent/backup" -Destination $destination;
-        Remove-Item -Path "$parent/backup" -Force -Recurse;
-        return;
+        if($backup){
+            echo $_.Exception;
+            echo "Restoring backup...."
+            Remove-Item -Path "$destination/*"  -Force -Recurse;
+            Copy-Item -Path "$parent/backup/*" -Destination $destination;
+            Remove-Item -Path "$parent/backup" -Force -Recurse;
+            return;
+        }
     }    
 
     ##restart the service

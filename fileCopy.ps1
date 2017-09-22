@@ -25,6 +25,13 @@ This script is used for the backend of the deployment portal
         -Enhanaced logging to be passed to front end
         -Fixed a bunch of Write Error bugs
         -Added Catching for a Index-Outof-Bounds Exception
+    -Version 4.0 (9/21/2017)
+        -Fixed backup issues
+        -Made backup optional based on leaves
+        -Replaced some True variables with the appropriate $True
+        -Fixed minute issues that had issues with performance
+        -Cleaned and removed unnecessary code.
+        -Early exits on conditions that should cause a termination
 
 
 #>
@@ -105,34 +112,32 @@ else{
    Write-Error -Message ($destComputer +" is not online or is invalid");
    return;
 }
-
+if(!(Test-Path -path $source)){
+    Write-Error -Message "The source path: $source could not be found exiting...."
+    exit;
+}
 
 #now begin copying
-if(!(Test-Path -Path $source)){
-    Write-Error -Message "Unable to find Source Destination: Check path";
-    return;
-}
-if(!(Test-path -path $destination)){
-    Echo "Creating Folder in Destination: $destination";
+if(!(Test-Path -Path $destination)){
+    echo "The path does not exist, creating folder...";
+    $backup = $false;
+    $folderName = Split-Path $destination -Leaf;
+    $parent = Split-Path $destination -Parent;
     try{
-        $Dir = mkdir -path $destination -ErrorAction stop;
+        mkdir -Path $parent -Name $folderName;
     }catch{
-        Write-Error -Message $_.Exception;
+        Write-Error -Message "Unable to create the destination folder... Exiting....";
+        exit;
     }
 }
-
-try{
-    echo "Creating a backup of the files in destination directory.....";
-    $parent = Split-Path -parent $destination;
-    echo $parent;
-    mkdir -Path $parent -Name "backup" -ErrorAction SilentlyContinue;
-    Copy-Item -Path $destination -Destination "$parent/backup" -Recurse -Force;
-    echo "backup created Successfully!";
-}
-catch
-{
-    Write-Error -Message "Error creating backup....Exiting...";
-    return;
+else{
+    $backup = $true;
+    $folderName = Split-Path $destination -Leaf;
+    $parent = Split-Path $destination -Parent;
+    echo "creating a backup for the folder: $foldername";
+    mkdir -Path $parent -name "backup" -ErrorAction Stop;
+    Copy-Item -Path "$destination/*" -Destination "$parent/backup";
+    remove-item -Path "$destination/*" -Force -Recurse;
 }
 try{
     echo "Beginning to copy files...";
@@ -146,13 +151,22 @@ try{
     }
     Copy-Item -path $source -Destination $destination -Force -Recurse -ErrorAction Stop;
     echo "Files copied successfully: $filesCopied ($values)";
-    echo "Removing backup files...."
-    Remove-Item -Path "$parent/backup" -Recurse -Force;
-}catch{
-    echo $_.Exception;
-    echo "Restoring backup...."
-    Remove-Item -Path $destination  -Force -Recurse;
-    Copy-Item -Path "$parent/backup" -Destination $destination;
-    #Remove-Item -Path "$parent/backup" -Force -Recurse;
+    if($backup){
+        echo "Removing backup files..."
+        Remove-Item -Path "$parent/backup" -Recurse -Force;
+        }
     return;
+}catch{
+    if($backup){
+        echo $_.Exception;
+        echo "Restoring backup...."
+        Remove-Item -Path "$destination/*"  -Force -Recurse;
+        Copy-Item -Path "$parent/backup/*" -Destination $destination;
+        Remove-Item -Path "$parent/backup" -Force -Recurse;
+        return;
+     }
+    else{
+       echo "No backup to be restored...Exiting..."
+       exit;
+    }
 }    
